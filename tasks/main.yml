@@ -1,0 +1,186 @@
+---
+- name: Add the RabbitMQ YUM repository GPG keys
+  rpm_key:
+    fingerprint: "{{ item.fingerprint }}"
+    key: "{{ item.key }}"
+    state: present
+  with_items:
+    - key: https://packagecloud.io/rabbitmq/erlang/gpgkey
+      fingerprint: 2EBDE413D3CE5D35BCD15B7C71C63471DF309A0B
+    - key: https://packagecloud.io/rabbitmq/rabbitmq-server/gpgkey
+      fingerprint: 8C695B0219AFDEB04A058ED8F4E789204D206F89
+  tags:
+    - rabbitmq
+
+- name: Add the RabbitMQ Erlang YUM repository
+  yum_repository:
+    name: "{{ item.name }}"
+    description: "{{ item.description }}"
+    baseurl: "{{ item.baseurl }}"
+    gpgcheck: no
+    gpgkey: "{{ item.gpgkey }}"
+    repo_gpgcheck: yes
+  with_items:
+    - name: rabbitmq_erlang
+      description: RabbitMQ Erlang
+      baseurl: "https://packagecloud.io/rabbitmq/erlang/el/{{ ansible_distribution_major_version }}/$basearch"
+      gpgkey: https://packagecloud.io/rabbitmq/erlang/gpgkey
+    - name: rabbitmq_rabbitmq-server
+      description: RabbitMQ Server
+      baseurl: "https://packagecloud.io/rabbitmq/rabbitmq-server/el/{{ ansible_distribution_major_version }}/$basearch"
+      gpgkey: https://packagecloud.io/rabbitmq/rabbitmq-server/gpgkey
+  tags:
+    - rabbitmq
+
+- name: Install rabbitmq-server
+  yum:
+    name: "rabbitmq-server{{ '-' if rabbitmq_version is defined else '' }}{{ rabbitmq_version | default('') }}"
+    state: present
+    update_cache: yes
+  tags:
+    - rabbitmq
+
+- name: Get the RabbitMQ version
+  command: rpm -q --qf '%{VERSION}' rabbitmq-server
+  args:
+    warn: no
+  register: rabbitmq_version
+  changed_when: no
+  tags:
+    - rabbitmq
+
+- name: Set the RabbitMQ version fact
+  set_fact:
+    rabbitmq_version: "{{ rabbitmq_version.stdout }}"
+
+- name: Install the version lock package
+  yum:
+    name: "{{ 'python3-dnf-plugin-versionlock' if ansible_distribution_major_version >= '8' else 'yum-plugin-versionlock' }}"
+    state: present
+  when: rabbitmq_version_lock | bool
+  tags:
+    - rabbitmq
+
+- include_tasks: version_lock.yml
+  vars:
+    package: "{{ item }}"
+  with_items:
+    - rabbitmq-server
+    - erlang
+  when: rabbitmq_version_lock | bool
+  tags:
+    - rabbitmq
+
+- name: Copy over the SSL key
+  copy:
+    src: "{{ rabbitmq_ssl_key_file }}"
+    dest: /etc/rabbitmq/ssl.key
+    owner: root
+    group: rabbitmq
+    mode: "0440"
+  when: rabbitmq_ssl_key_file is defined
+  # Don't log this to avoid the private key from getting exposed
+  no_log: yes
+  notify: restart rabbitmq-server
+  tags:
+    - rabbitmq
+
+- name: Copy over the SSL certificate
+  copy:
+    src: "{{ rabbitmq_ssl_cert_file }}"
+    dest: /etc/rabbitmq/ssl.crt
+    owner: root
+    group: rabbitmq
+    mode: "0444"
+  when: rabbitmq_ssl_cert_file is defined
+  notify: restart rabbitmq-server
+  tags:
+    - rabbitmq
+
+- name: Download and install additional RabbitMQ plugins
+  get_url:
+    url: "{{ item }}"
+    dest: "/usr/lib/rabbitmq/lib/rabbitmq_server-{{ rabbitmq_version }}/plugins"
+    owner: root
+    group: root
+    mode: "0644"
+  with_items: "{{ rabbitmq_download_plugins }}"
+  when: item.url is defined
+  tags:
+    - rabbitmq
+
+- name: Set the enabled RabbitMQ plugins
+  rabbitmq_plugin:
+    names: "{{ rabbitmq_plugins | join(',') }}"
+    state: enabled
+  notify: restart rabbitmq-server
+  tags:
+    - rabbitmq
+
+- name: Get the enabled RabbitMQ plugins
+  command: rabbitmq-plugins list --formatter json
+  register: rabbitmq_enabled_plugins
+  changed_when: no
+  tags:
+    - rabbitmq
+
+- name: Set the rabbitmq_enabled_plugins fact
+  set_fact:
+    rabbitmq_enabled_plugins: "{{ rabbitmq_enabled_plugins.stdout | from_json | json_query('plugins[?enabled==`enabled`].name') }}"
+  tags:
+    - rabbitmq
+
+- name: Configure RabbitMQ
+  template:
+    src: rabbitmq.conf.j2
+    dest: /etc/rabbitmq/rabbitmq.conf
+    owner: root
+    group: rabbitmq
+    mode: "0644"
+  notify: restart rabbitmq-server
+  tags:
+    - rabbitmq
+
+- name: Enable the rabbitmq-server service
+  service:
+    name: rabbitmq-server
+    enabled: yes
+    state: started
+  tags:
+    - rabbitmq
+
+- name: Remove the guest user
+  rabbitmq_user:
+    user: guest
+    state: absent
+  when: rabbitmq_remove_guest_user | bool
+  tags:
+    - rabbitmq
+
+- name: Add RabbitMQ users
+  rabbitmq_user: "{{ item }}"
+  with_items: "{{ rabbitmq_users }}"
+  # Don't log this since the user password can get exposed
+  no_log: yes
+  tags:
+    - rabbitmq
+
+- name: Open the AMQP(S) port {{ rabbitmq_amqp_listen_port }} (firewalld)
+  firewalld:
+    port: "{{ rabbitmq_amqp_listen_port }}/tcp"
+    state: enabled
+    permanent: yes
+    immediate: yes
+  when: rabbitmq_configure_firewalld and rabbitmq_amqp_listen_address != '127.0.0.1'
+  tags:
+    - rabbitmq
+
+- name: Open the management port {{ rabbitmq_management_listen_port }} (firewalld)
+  firewalld:
+    port: "{{ rabbitmq_management_listen_port }}/tcp"
+    state: enabled
+    permanent: yes
+    immediate: yes
+  when: 'rabbitmq_configure_firewalld and "rabbitmq_management" in rabbitmq_enabled_plugins'
+  tags:
+    - rabbitmq

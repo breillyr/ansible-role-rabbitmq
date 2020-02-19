@@ -1,0 +1,12 @@
+---
+rabbitmq_amqp_listen_address: 0.0.0.0
+rabbitmq_amqp_listen_port: "{{ 5671 if rabbitmq_ssl_key_file is defined and rabbitmq_ssl_cert_file is defined else 5672 }}"
+rabbitmq_configure_firewalld: no
+rabbitmq_custom_config: {}
+rabbitmq_download_plugins: []
+rabbitmq_plugins:
+- rabbitmq_management
+rabbitmq_management_listen_port: 15672
+rabbitmq_remove_guest_user: yes
+rabbitmq_users: []
+rabbitmq_version_lock: no

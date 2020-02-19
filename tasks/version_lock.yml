@@ -1,0 +1,29 @@
+# If the epoch is not set, `(none)` is returned instead of `0`.
+- name: Get the {{ package }} NEVR
+  command: "rpm -q --qf '%{NAME}-%{EPOCH}:%{VERSION}-%{RELEASE}' {{ package }}"
+  args:
+    warn: no
+  register: package_nvr
+  changed_when: no
+  tags:
+   - rabbitmq
+
+# Inspired by https://github.com/elastic/ansible-elasticsearch/blob/master/tasks/elasticsearch-RedHat-version-lock.yml
+- name: Check if {{ package }} is version locked
+  shell: "yum versionlock list | grep -c {{ package_nvr.stdout | replace('(none)', '0') }}"
+  args:
+    warn: no
+  changed_when: false
+  # This is needed so the task doesn't fail when it's not locked
+  failed_when: false
+  register: version_lock_result
+  tags:
+   - rabbitmq
+
+- name: Lock {{ package }}
+  shell: "yum versionlock delete {{ package }}* ; yum versionlock add {{ package_nvr.stdout | replace('(none)', '0') }}"
+  args:
+    warn: no
+  when: version_lock_result and version_lock_result.stdout|int == 0
+  tags:
+   - rabbitmq

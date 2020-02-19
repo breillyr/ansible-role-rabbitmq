@@ -1,0 +1,27 @@
+{{ ansible_managed | comment }}
+
+{% if rabbitmq_ssl_key_file is defined and rabbitmq_ssl_cert_file is defined %}
+ssl_options.certfile = /etc/rabbitmq/ssl.crt
+ssl_options.keyfile = /etc/rabbitmq/ssl.key
+ssl_options.cacertfile = /etc/pki/tls/certs/ca-bundle.crt
+listeners.ssl.1 = {{ rabbitmq_amqp_listen_address }}:{{ rabbitmq_amqp_listen_port }}
+{% else %}
+listeners.tcp.1 = {{ rabbitmq_amqp_listen_address }}:{{ rabbitmq_amqp_listen_port }}
+{% endif %}
+
+{%- if "rabbitmq_management" in rabbitmq_enabled_plugins %}
+
+{% if rabbitmq_ssl_key_file is defined and rabbitmq_ssl_cert_file is defined %}
+management.ssl.port = {{ rabbitmq_management_listen_port }}
+management.ssl.certfile = /etc/rabbitmq/ssl.crt
+management.ssl.keyfile = /etc/rabbitmq/ssl.key
+management.ssl.cacertfile = /etc/pki/tls/certs/ca-bundle.crt
+{% else %}
+management.tcp.port = {{ rabbitmq_management_listen_port }}
+{% endif %}
+
+{%- endif %}
+
+{% for item in (rabbitmq_custom_config | dict2items | sort(attribute='key')) %}
+{{ item.key }} = {{ item.value | to_json | replace('"', '') }}
+{% endfor %}
