@@ -1,5 +1,6 @@
 galaxy_info:
   author: Matt Prahl
+  role_name: rabbitmq
   description: Manages an Ansible RabbitMQ deployment on EL7+
   license: GPL-3.0-or-later
   min_ansible_version: 2.9
